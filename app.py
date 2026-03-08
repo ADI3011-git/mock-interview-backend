@@ -3,6 +3,8 @@ from flask_cors import CORS
 import requests
 import os
 import base64
+import io
+from pypdf import PdfReader
 
 app = Flask(__name__)
 CORS(app)
@@ -10,14 +12,20 @@ CORS(app)
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
+def extract_pdf_text(base64_data):
+    pdf_bytes = base64.b64decode(base64_data)
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    text = ""
+    for page in reader.pages:
+        text += page.extract_text() or ""
+    return text.strip()
+
 @app.route("/api/chat", methods=["POST"])
 def chat():
     try:
         body = request.get_json()
         messages = body.get("messages", [])
 
-        # Convert messages to text-only for Groq (Groq doesn't support PDF)
-        # Extract text parts only
         groq_messages = []
         for msg in messages:
             content = msg.get("content", "")
@@ -29,8 +37,9 @@ def chat():
                     if item.get("type") == "text":
                         text_parts.append(item["text"])
                     elif item.get("type") == "document":
-                        # Decode base64 PDF to text hint
-                        text_parts.append("[Resume PDF uploaded by candidate]")
+                        src = item.get("source", {})
+                        pdf_text = extract_pdf_text(src.get("data", ""))
+                        text_parts.append(f"Here is the candidate's resume:\n{pdf_text}")
                 groq_messages.append({"role": msg.get("role", "user"), "content": " ".join(text_parts)})
 
         response = requests.post(
@@ -47,16 +56,11 @@ def chat():
         )
 
         data = response.json()
-
         if "error" in data:
             return jsonify({"error": data["error"]}), 500
 
         text = data["choices"][0]["message"]["content"]
-
-        # Normalize to Claude-like format for frontend compatibility
-        return jsonify({
-            "content": [{"type": "text", "text": text}]
-        }), 200
+        return jsonify({"content": [{"type": "text", "text": text}]}), 200
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
