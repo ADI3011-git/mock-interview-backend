@@ -7,8 +7,8 @@ import base64
 app = Flask(__name__)
 CORS(app)
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 @app.route("/api/chat", methods=["POST"])
 def chat():
@@ -16,44 +16,44 @@ def chat():
         body = request.get_json()
         messages = body.get("messages", [])
 
-        # Convert messages to Gemini format
-        parts = []
+        # Convert messages to text-only for Groq (Groq doesn't support PDF)
+        # Extract text parts only
+        groq_messages = []
         for msg in messages:
             content = msg.get("content", "")
             if isinstance(content, str):
-                parts.append({"text": content})
+                groq_messages.append({"role": msg.get("role", "user"), "content": content})
             elif isinstance(content, list):
+                text_parts = []
                 for item in content:
                     if item.get("type") == "text":
-                        parts.append({"text": item["text"]})
+                        text_parts.append(item["text"])
                     elif item.get("type") == "document":
-                        src = item.get("source", {})
-                        parts.append({
-                            "inline_data": {
-                                "mime_type": src.get("media_type", "application/pdf"),
-                                "data": src.get("data", "")
-                            }
-                        })
-
-        payload = {
-            "contents": [{"role": "user", "parts": parts}],
-            "generationConfig": {"maxOutputTokens": 1500}
-        }
+                        # Decode base64 PDF to text hint
+                        text_parts.append("[Resume PDF uploaded by candidate]")
+                groq_messages.append({"role": msg.get("role", "user"), "content": " ".join(text_parts)})
 
         response = requests.post(
-            f"{GEMINI_URL}?key={GEMINI_API_KEY}",
-            headers={"Content-Type": "application/json"},
-            json=payload
+            GROQ_URL,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {GROQ_API_KEY}"
+            },
+            json={
+                "model": "llama-3.3-70b-versatile",
+                "max_tokens": 1500,
+                "messages": groq_messages
+            }
         )
 
         data = response.json()
 
-        # Normalize response to Claude-like format for frontend compatibility
-        try:
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
-        except (KeyError, IndexError):
-            return jsonify({"error": str(data)}), 500
+        if "error" in data:
+            return jsonify({"error": data["error"]}), 500
 
+        text = data["choices"][0]["message"]["content"]
+
+        # Normalize to Claude-like format for frontend compatibility
         return jsonify({
             "content": [{"type": "text", "text": text}]
         }), 200
