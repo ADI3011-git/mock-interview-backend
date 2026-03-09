@@ -50,7 +50,7 @@ def chat():
             },
             json={
                 "model": "llama-3.3-70b-versatile",
-                "max_tokens": 1500,
+                "max_tokens": body.get("max_tokens", 2000),
                 "messages": groq_messages
             }
         )
